@@ -1,6 +1,73 @@
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <assert.h>
+#include <fcntl.h>
 
-int main(int argc, char *argv[]) {
-	printf("Hello World!\n");
+#define MAX_BUF_SIZE 8192
+#define MIN_BUF_SIZE 1
+#define DEFAULT_BUF_SIZE 16
+#define MAX_LINE_SIZE 1024
+#define DEFAULT_LINE_SIZE 32
+#define MIN_LINE_SIZE 16
+
+
+
+void print_help(char* nombre_programa)
+{
+	fprintf(stderr, "Uso: %s [-b BUF_SIZE] [-l MAX_LINE_SIZE]\nLee de la entrada estándar una secuencia de líneas conteniendo órdenes\npara ser ejecutadas y lanza los procesosnecesarios para ejecutar cada línea, esperando a su terminacion para ejecutar la siguiente.\n-b BUF_SIZE\tTamaño del buffer de entrada 1<=BUF_SIZE<=8192\n-l MAX_LINE_SIZE\tTamaño máximo de línea 16<=MAX_LINE_SIZE<=1024\n", nombre_programa);
+}
+
+void read_line(char *buffer, int buf_size,int max_line_size) 
+{
+    ssize_t read_words;
+
+    while(read_words = read(STDIN_FILENO, buffer, buf_size)) 
+    {
+
+    }
+}
+
+int main(int argc, char *argv[]) 
+{
+    int opt;
+    int buf_size = -1;
+	int line_size = -1;
+	char **buffer;
+    int line;
+
+    optind = 1;
+    while ((opt = getopt(argc, argv, "l:b:h")) != -1)
+    {
+        switch (opt)
+        {
+        case 'b':
+            buf_size = atoi(optarg);
+            break;
+		case 'l':
+			line_size = atoi(optarg);
+			break;
+        case 'h':
+            print_help(argv[0]);
+            exit(EXIT_SUCCESS);
+        default:
+            print_help(argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if(buf_size == -1)
+    {
+		fprintf(stderr, "%s: option requires an argument -- 'b'\n", argv[0]);
+		printAyuda(argv[0]);
+		exit(EXIT_FAILURE);
+	}
+
+    if ((buf_size < MIN_BUF_SIZE) || (buf_size > MAX_BUF_SIZE)){
+		fprintf(stderr, "Error: El tamaño de buffer tiene que estar entre 1 y 8192.\n");
+		fprintf(stderr, "%s: option requires an argument -- 'b'\n", argv[0]);
+		printAyuda(argv[0]);
+		exit(EXIT_FAILURE);
+	}
 }
