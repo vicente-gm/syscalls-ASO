@@ -1,3 +1,5 @@
+//Vicente Gonzalez Morales y Alvaro Cutillas Florido Subgrupo 3.3
+
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,15 +21,15 @@ void print_help(char* nombre_programa)
 	fprintf(stderr, "Uso: %s [-b BUF_SIZE] [-l MAX_LINE_SIZE]\nLee de la entrada estándar una secuencia de líneas conteniendo órdenes\npara ser ejecutadas y lanza los procesosnecesarios para ejecutar cada línea, esperando a su terminacion para ejecutar la siguiente.\n-b BUF_SIZE\tTamaño del buffer de entrada 1<=BUF_SIZE<=8192\n-l MAX_LINE_SIZE\tTamaño máximo de línea 16<=MAX_LINE_SIZE<=1024\n", nombre_programa);
 }
 
-// void read_line(char *buffer, int buf_size,int max_line_size)
-// {
-//     ssize_t read_words;
-//
-//     while(read_words = read(STDIN_FILENO, buffer, buf_size))
-//     {
-//
-//     }
-// }
+void read_line(char *buffer, char *comBuffer, int buf_size, int max_line_size)
+{
+    ssize_t read_words;
+
+    while(read_words = read(STDIN_FILENO, buffer, buf_size))
+    {
+
+    }
+}
 
 int main(int argc, char *argv[]) 
 {
@@ -35,6 +37,7 @@ int main(int argc, char *argv[])
     int buf_size = DEFAULT_BUF_SIZE;
 	int line_size = DEFAULT_LINE_SIZE;
 	char *buffer;
+    char *bufferComando;
     int line;
 
     optind = 1;
@@ -94,6 +97,11 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    if ((bufferComando = (char *) malloc(MAX_LINE_SIZE * sizeof(char))) == NULL)
+    {
+        perror("malloc()");
+        exit(EXIT_FAILURE);
+    }
 
     printf("%d", buf_size);
     printf("%d", line_size);
