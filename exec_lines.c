@@ -23,6 +23,9 @@
 void print_help(char* nombre_programa);
 
 typedef struct line *line_t;
+
+typedef struct command *command_t;
+
 void execute_line(line_t line);
 
 
@@ -121,8 +124,8 @@ int main(int argc, char *argv[])
             {
                 bufferComando[cont] = '\0';
                 linea->number = num_line;
-                linea->max_size = (line_size/2) + 1;
-                linea->command = bufferComando;
+                linea->max_size = line_size;
+                linea->content = bufferComando;
                 execute_line(linea);
                 cont = 0;
             } 
@@ -145,7 +148,13 @@ struct line
 {
     int number;
     int max_size;
-    char *command;
+    char *content;
+};
+
+struct command 
+{
+    char *bin;
+    char **arguments;
 };
 
 void print_help(char* nombre_programa)
@@ -153,21 +162,58 @@ void print_help(char* nombre_programa)
 	fprintf(stderr, "Uso: %s [-b BUF_SIZE] [-l MAX_LINE_SIZE]\nLee de la entrada estándar una secuencia de líneas conteniendo órdenes\npara ser ejecutadas y lanza los procesosnecesarios para ejecutar cada línea, esperando a su terminacion para ejecutar la siguiente.\n-b BUF_SIZE\tTamaño del buffer de entrada 1<=BUF_SIZE<=8192\n-l MAX_LINE_SIZE\tTamaño máximo de línea 16<=MAX_LINE_SIZE<=1024\n", nombre_programa);
 }
 
-void execute_line(line_t line)
+void parse_line(line_t line) 
 {
-    char **tokens = malloc(line->max_size * sizeof(char *));
+    char **tokens = malloc((line->max_size/2 + 1) * sizeof(char *));
     int i = 0;
 
     char *saveptr;
-    char *token_read = strtok_r(line->command, SEPARATOR, &saveptr);
-    while(token_read != NULL) {
+    char *token_read = strtok_r(line->content, SEPARATOR, &saveptr);
+    while(token_read != NULL) 
+    {
         tokens[i] = token_read;
         i++;
         token_read = strtok_r(NULL, SEPARATOR, &saveptr);
     }
-
+    
     tokens[i] = NULL;
 
-    i = 0;
-    
+    execute_command(tokens);
+}
+
+void execute_command(char** arguments)
+{
+    char *bin1 = arguments[0];
+    char *bin2 = NULL;
+    int fd = -1;
+    int trunc = 0;
+    char *file_name = NULL;
+
+    int i = 0;
+    while(arguments[i] != NULL)
+    {
+        if(strcmp(arguments[i], "<") == 0) 
+        {
+            fd = STDIN_FILENO;
+            file_name = arguments[i+1];
+        }
+        else if(strcmp(arguments[i], ">") == 0) 
+        {
+            fd = STDOUT_FILENO;
+            trunc = 0;
+            file_name = arguments[i+1];
+        }
+        else if(strcmp(arguments[i], ">>") == 0) 
+        {
+            fd = STDOUT_FILENO;
+            trunc = 1;
+            file_name = arguments[i+1];
+        }
+        else if(strcmp(arguments[i], "|") == 0) 
+        {
+            bin2 = file_name = arguments[i+1];
+        }
+
+        i++;
+    }
 }
