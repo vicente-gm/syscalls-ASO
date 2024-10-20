@@ -16,8 +16,20 @@
 #define MIN_LINE_SIZE 16
 
 #define SEPARATOR " "
-#define CONTROL_CHAR "\n"
+#define CONTROL_CHAR '\n'
 
+struct line
+{
+    int number;
+    int max_size;
+    char *content;
+};
+
+struct command
+{
+    char *bin;
+    char **arguments;
+};
 
 
 void print_help(char* nombre_programa);
@@ -27,6 +39,17 @@ typedef struct line *line_t;
 typedef struct command *command_t;
 
 void execute_line(line_t line);
+
+void parse_line(line_t line);
+
+void execute_command(char** arguments);
+
+
+void print_line(line_t line) {
+    printf("Línea número: %d\n", line->number);
+    printf("Tamaño máximo de la línea: %d\n", line->max_size);
+    printf("Contenido de la línea: %s\n\n", line->content);
+}
 
 
 int main(int argc, char *argv[]) 
@@ -96,6 +119,12 @@ int main(int argc, char *argv[])
     int cont = 0;
     line_t linea;
 
+    linea = malloc(sizeof(struct line));
+    if (linea == NULL) {
+        perror("malloc()");
+        exit(EXIT_FAILURE);
+    }
+
     /* Reserva memoria dinámica para buffer de lectura */
     if ((buffer = malloc(buf_size * sizeof(char))) == NULL)
     {
@@ -111,51 +140,32 @@ int main(int argc, char *argv[])
 
     while ((num_read = read(STDIN_FILENO, buffer, buf_size)) > 0)
     {
-        cont += num_read;
         if(cont > line_size)
         {
             fprintf(stderr, "Error: línea %d demasiado larga: \n", num_line);
             exit(EXIT_FAILURE);
         }
 
-        for (ssize_t i = 0; i < num_read; i++) 
+        for (ssize_t i = 0; i < num_read; i++)
         {
-            if (buffer[i] == CONTROL_CHAR) 
+            if (buffer[i] == CONTROL_CHAR)
             {
                 bufferComando[cont] = '\0';
                 linea->number = num_line;
                 linea->max_size = line_size;
                 linea->content = bufferComando;
-                execute_line(linea);
+                parse_line(linea);
                 cont = 0;
-            } 
+                num_line++;
+            }
             else
             {
                 bufferComando[cont] = buffer[i];
                 cont++;
             }
         }
-
-        num_line++;
     }
-
-    printf("Size of buffer: %d\n", buf_size);
-    printf("Max. size of line: %d\n", line_size);
-
 }
-
-struct line 
-{
-    int number;
-    int max_size;
-    char *content;
-};
-
-struct command 
-{
-    char *bin;
-    char **arguments;
-};
 
 void print_help(char* nombre_programa)
 {
@@ -164,6 +174,8 @@ void print_help(char* nombre_programa)
 
 void parse_line(line_t line) 
 {
+    print_line(line);
+
     char **tokens = malloc((line->max_size/2 + 1) * sizeof(char *));
     int i = 0;
 
@@ -177,6 +189,13 @@ void parse_line(line_t line)
     }
     
     tokens[i] = NULL;
+
+    for (int j = 0; j < i; j++)
+    {
+        printf("Token %d: %s\n", j + 1, tokens[j]);
+    }
+
+    printf("\n");
 
     execute_command(tokens);
 }
@@ -192,28 +211,29 @@ void execute_command(char** arguments)
     int i = 0;
     while(arguments[i] != NULL)
     {
-        if(strcmp(arguments[i], "<") == 0) 
+        if(strcmp(arguments[i], "<") == 0)
         {
             fd = STDIN_FILENO;
             file_name = arguments[i+1];
         }
-        else if(strcmp(arguments[i], ">") == 0) 
+        else if(strcmp(arguments[i], ">") == 0)
         {
             fd = STDOUT_FILENO;
             trunc = 0;
             file_name = arguments[i+1];
         }
-        else if(strcmp(arguments[i], ">>") == 0) 
+        else if(strcmp(arguments[i], ">>") == 0)
         {
-            fd = STDOUT_FILENO;
+            fd = STDERR_FILENO;
             trunc = 1;
             file_name = arguments[i+1];
         }
-        else if(strcmp(arguments[i], "|") == 0) 
+        else if(strcmp(arguments[i], "|") == 0)
         {
             bin2 = file_name = arguments[i+1];
         }
 
         i++;
     }
+
 }
