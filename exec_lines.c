@@ -18,38 +18,20 @@
 #define SEPARATOR " "
 #define CONTROL_CHAR '\n'
 
+
 struct line
 {
     int number;
     int max_size;
     char *content;
 };
-
-struct command
-{
-    char *bin;
-    char **arguments;
-};
-
-
-void print_help(char* nombre_programa);
-
 typedef struct line *line_t;
 
-typedef struct command *command_t;
-
-void execute_line(line_t line);
-
+void print_help(char* nombre_programa);
 void parse_line(line_t line);
-
 void execute_command(char** arguments);
-
-
-void print_line(line_t line) {
-    printf("Línea número: %d\n", line->number);
-    printf("Tamaño máximo de la línea: %d\n", line->max_size);
-    printf("Contenido de la línea: %s\n\n", line->content);
-}
+void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type);
+void pipe_command(char *bin_out, char **args_out, char *bin_in, char **args_in);
 
 
 int main(int argc, char *argv[]) 
@@ -110,7 +92,6 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-    //--------------------------------------------------------------//
     ssize_t num_read;
     ssize_t bytesTotal = 0;
     char *buffer;
@@ -119,13 +100,12 @@ int main(int argc, char *argv[])
     int cont = 0;
     line_t linea;
 
-    linea = malloc(sizeof(struct line));
+    linea = malloc(sizeof(line_t));
     if (linea == NULL) {
         perror("malloc()");
         exit(EXIT_FAILURE);
     }
 
-    /* Reserva memoria dinámica para buffer de lectura */
     if ((buffer = malloc(buf_size * sizeof(char))) == NULL)
     {
         perror("malloc()");
@@ -167,6 +147,13 @@ int main(int argc, char *argv[])
     }
 }
 
+void print_line(line_t line) 
+{
+    printf("Línea número: %d\n", line->number);
+    printf("Tamaño máximo de la línea: %d\n", line->max_size);
+    printf("Contenido de la línea: %s\n\n", line->content);
+}
+
 void print_help(char* nombre_programa)
 {
 	fprintf(stderr, "Uso: %s [-b BUF_SIZE] [-l MAX_LINE_SIZE]\nLee de la entrada estándar una secuencia de líneas conteniendo órdenes\npara ser ejecutadas y lanza los procesosnecesarios para ejecutar cada línea, esperando a su terminacion para ejecutar la siguiente.\n-b BUF_SIZE\tTamaño del buffer de entrada 1<=BUF_SIZE<=8192\n-l MAX_LINE_SIZE\tTamaño máximo de línea 16<=MAX_LINE_SIZE<=1024\n", nombre_programa);
@@ -174,8 +161,6 @@ void print_help(char* nombre_programa)
 
 void parse_line(line_t line) 
 {
-    print_line(line);
-
     char **tokens = malloc((line->max_size/2 + 1) * sizeof(char *));
     int i = 0;
 
@@ -187,15 +172,7 @@ void parse_line(line_t line)
         i++;
         token_read = strtok_r(NULL, SEPARATOR, &saveptr);
     }
-    
     tokens[i] = NULL;
-
-    for (int j = 0; j < i; j++)
-    {
-        printf("Token %d: %s\n", j + 1, tokens[j]);
-    }
-
-    printf("\n");
 
     execute_command(tokens);
 }
@@ -204,36 +181,176 @@ void execute_command(char** arguments)
 {
     char *bin1 = arguments[0];
     char *bin2 = NULL;
-    int fd = -1;
     int trunc = 0;
-    char *file_name = NULL;
 
     int i = 0;
     while(arguments[i] != NULL)
     {
         if(strcmp(arguments[i], "<") == 0)
         {
-            fd = STDIN_FILENO;
-            file_name = arguments[i+1];
+            arguments[i] = NULL;
+            redir_command(bin1, arguments, arguments[i+1], STDIN_FILENO, 1, 1);
         }
         else if(strcmp(arguments[i], ">") == 0)
         {
-            fd = STDOUT_FILENO;
-            trunc = 0;
-            file_name = arguments[i+1];
+            arguments[i] = NULL;
+            redir_command(bin1, arguments, arguments[i+1], STDOUT_FILENO, 1, 0);
         }
         else if(strcmp(arguments[i], ">>") == 0)
         {
-            fd = STDERR_FILENO;
-            trunc = 1;
-            file_name = arguments[i+1];
+            arguments[i] = NULL;
+            redir_command(bin1, arguments, arguments[i+1], STDOUT_FILENO, 0, 0);
         }
         else if(strcmp(arguments[i], "|") == 0)
         {
-            bin2 = file_name = arguments[i+1];
+            arguments[i] = NULL;
+            char **args1 = arguments;
+            char **args2 = arguments + (i+1);
+            char *bin2 = arguments[i+1];
+            pipe_command(bin1, args1, bin2, args2);
         }
 
         i++;
     }
 
+}
+
+// type : tipo de fichero. 1 para entrada, 0 para salida.
+void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type) 
+{
+    if(close(fd) == -1) 
+    {
+        perror("close()");
+        exit(EXIT_FAILURE);
+    }
+
+    int flags = -1;
+    if(!type)    // Fichero de salida
+    {
+        if(trunc) 
+        {
+            flags = O_WRONLY | O_CREAT | O_TRUNC;
+        }
+        else 
+        {
+            flags = O_WRONLY | O_CREAT | O_APPEND;
+        }
+
+        if(open(file_name, flags, S_IWUSR | S_IRUSR) == -1) 
+        {
+            perror("open(fileout)");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else    // Fichero de entrada
+    {
+        if(open(file_name, O_RDONLY) == -1) 
+            {
+                perror("open(filein)");
+                exit(EXIT_FAILURE);
+            }
+    }
+
+    switch (fork())
+    {
+    case -1:
+        perror("fork(1)");
+        exit(EXIT_FAILURE);
+        break;
+    case 0:
+        execvp(bin, args);
+        perror("execvp(redir)");
+        exit(EXIT_FAILURE);
+        break;
+    default:
+        break;
+    }
+}
+
+void pipe_command(char *bin_left, char **args_left, char *bin_right, char **args_right) 
+{
+    int pipefds[2];
+    if (pipe(pipefds) == -1)
+    {
+        perror("pipe()");
+        exit(EXIT_FAILURE);
+    }
+
+    switch (fork())     // Hijo izquierdo de la tubería
+    {
+        case -1:
+            perror("fork(1)");
+            exit(EXIT_FAILURE);
+            break;
+        case 0: 
+            if (close(pipefds[0]) == -1)
+            {
+                perror("close(1)");
+                exit(EXIT_FAILURE);
+            }
+           
+            if (dup2(pipefds[1], STDOUT_FILENO) == -1)
+            {
+                perror("dup2(1)");
+                exit(EXIT_FAILURE);
+            }
+            
+            if (close(pipefds[1]) == -1)
+            {
+                perror("close(2)");
+                exit(EXIT_FAILURE);
+            }
+           
+            execvp(bin_left, args_left);
+            perror("execlp(izquierdo)");
+            exit(EXIT_FAILURE);
+            break;
+        default:
+            break;
+    }
+
+    switch (fork())     // Hijo derecho de la tubería
+    {
+        case -1:
+            perror("fork(2)");
+            exit(EXIT_FAILURE);
+            break;
+        case 0: 
+            if (close(pipefds[1]) == -1)
+            {
+                perror("close(3)");
+                exit(EXIT_FAILURE);
+            }
+            
+            if (dup2(pipefds[0], STDIN_FILENO) == -1)
+            {
+                perror("dup2(2)");
+                exit(EXIT_FAILURE);
+            }
+            
+            if (close(pipefds[0]) == -1)
+            {
+                perror("close(4)");
+                exit(EXIT_FAILURE);
+            }
+            
+            execvp(bin_right, args_right);
+            perror("execlp(derecho)");
+            exit(EXIT_FAILURE);
+            break;
+        default: 
+            break;
+    }
+
+    // Cerramos los descriptores de fichero del padre
+    if (close(pipefds[0]) == -1)
+    {
+        perror("close(pipefds[0])");
+        exit(EXIT_FAILURE);
+    }
+    if (close(pipefds[1]) == -1)
+    {
+        perror("close(pipefds[1])");
+        exit(EXIT_FAILURE);
+    }
 }
