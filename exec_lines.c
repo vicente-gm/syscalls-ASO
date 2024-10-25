@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 
 #define MAX_BUF_SIZE 8192
 #define MIN_BUF_SIZE 1
@@ -29,8 +30,9 @@ typedef struct line *line_t;
 
 void print_help(char* nombre_programa);
 void parse_line(line_t line);
-void execute_command(char** arguments);
-void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type);
+void execute_command(char** arguments, int num_line);
+void normal_command(char *bin, char **args, int num_line);
+void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type, int num_line);
 void pipe_command(char *bin_out, char **args_out, char *bin_in, char **args_in);
 
 
@@ -80,8 +82,8 @@ int main(int argc, char *argv[])
     if ((buf_size < MIN_BUF_SIZE) || (buf_size > MAX_BUF_SIZE)) 
     {
         fprintf(stderr, "Error: El tamaño de buffer tiene que estar entre 1 y 8192.\n");
-        fprintf(stderr, "%s: option requires an argument -- 'b'\n", argv[0]);
-        print_help(argv[0]);
+//         fprintf(stderr, "%s: option requires an argument -- 'b'\n", argv[0]);
+//         print_help(argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -122,7 +124,7 @@ int main(int argc, char *argv[])
     {
         if(cont > line_size)
         {
-            fprintf(stderr, "Error: línea %d demasiado larga: \n", num_line);
+            fprintf(stderr, "Error: línea %d demasiado larga: %s\n", num_line, bufferComando);
             exit(EXIT_FAILURE);
         }
 
@@ -147,7 +149,7 @@ int main(int argc, char *argv[])
     }
 }
 
-void print_line(line_t line) 
+void print_line(line_t line)
 {
     printf("Línea número: %d\n", line->number);
     printf("Tamaño máximo de la línea: %d\n", line->max_size);
@@ -174,35 +176,40 @@ void parse_line(line_t line)
     }
     tokens[i] = NULL;
 
-    execute_command(tokens);
+    execute_command(tokens, line->number);
 }
 
-void execute_command(char** arguments)
+void execute_command(char** arguments, int num_line)
 {
     char *bin1 = arguments[0];
     char *bin2 = NULL;
     int trunc = 0;
+    int control = 0;
 
     int i = 0;
     while(arguments[i] != NULL)
     {
         if(strcmp(arguments[i], "<") == 0)
         {
+            control = 1;
             arguments[i] = NULL;
-            redir_command(bin1, arguments, arguments[i+1], STDIN_FILENO, 1, 1);
+            redir_command(bin1, arguments, arguments[i+1], STDIN_FILENO, 1, 1, num_line);
         }
         else if(strcmp(arguments[i], ">") == 0)
         {
+            control = 1;
             arguments[i] = NULL;
-            redir_command(bin1, arguments, arguments[i+1], STDOUT_FILENO, 1, 0);
+            redir_command(bin1, arguments, arguments[i+1], STDOUT_FILENO, 1, 0, num_line);
         }
         else if(strcmp(arguments[i], ">>") == 0)
         {
+            control = 1;
             arguments[i] = NULL;
-            redir_command(bin1, arguments, arguments[i+1], STDOUT_FILENO, 0, 0);
+            redir_command(bin1, arguments, arguments[i+1], STDOUT_FILENO, 0, 0, num_line);
         }
         else if(strcmp(arguments[i], "|") == 0)
         {
+            control = 1;
             arguments[i] = NULL;
             char **args1 = arguments;
             char **args2 = arguments + (i+1);
@@ -212,12 +219,50 @@ void execute_command(char** arguments)
 
         i++;
     }
+    if(control == 0){
+        normal_command(bin1, arguments, num_line);
+    }
 
 }
 
+
+void normal_command(char *bin, char **args, int num_line){
+    int status; // Variable para almacenar el estado de salida
+    pid_t pid = fork();
+
+    switch (pid)
+    {
+    case -1:
+        perror("fork()");
+        exit(EXIT_FAILURE);
+        break;
+    case 0:
+        execvp(bin, args);
+        perror("execvp()");
+        exit(EXIT_FAILURE);
+        break;
+    default:
+        if (waitpid(pid, &status, 0) == -1)
+        {
+            perror("wait()");
+            exit(EXIT_FAILURE);
+        }
+
+        // Verificar si el hijo terminó con un error
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
+        }
+        break;
+    }
+}
+
+
 // type : tipo de fichero. 1 para entrada, 0 para salida.
-void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type) 
+void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type, int num_line)
 {
+    int status; // Variable para almacenar el estado de salida
+    pid_t pid = fork();
+
     if(close(fd) == -1) 
     {
         perror("close()");
@@ -236,7 +281,7 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
             flags = O_WRONLY | O_CREAT | O_APPEND;
         }
 
-        if(open(file_name, flags, S_IWUSR | S_IRUSR) == -1) 
+        if(open(file_name, flags, S_IWUSR | S_IRUSR) == -1)
         {
             perror("open(fileout)");
             exit(EXIT_FAILURE);
@@ -251,7 +296,7 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
             }
     }
 
-    switch (fork())
+    switch (pid)
     {
     case -1:
         perror("fork(1)");
@@ -263,6 +308,16 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
         exit(EXIT_FAILURE);
         break;
     default:
+        if (waitpid(pid, &status, 0) == -1)
+        {
+            perror("wait()");
+            exit(EXIT_FAILURE);
+        }
+
+        // Verificar si el hijo terminó con un error
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
+        }
         break;
     }
 }
