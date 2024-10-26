@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <assert.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 
@@ -20,7 +19,7 @@
 #define FILETYPE_OUT 0
 
 #define SEPARATOR " "
-#define CONTROL_CHAR '\n'
+#define CONTROL_CHAR "\n"
 
 
 struct line
@@ -85,14 +84,12 @@ int main(int argc, char *argv[])
     if ((buf_size < MIN_BUF_SIZE) || (buf_size > MAX_BUF_SIZE)) 
     {
         fprintf(stderr, "Error: El tamaño de buffer tiene que estar entre 1 y 8192.\n");
-        print_help(argv[0]);
         exit(EXIT_FAILURE);
     }
 
-	if ((line_size < MIN_LINE_SIZE) || (line_size > MAX_LINE_SIZE)){
+	if ((line_size < MIN_LINE_SIZE) || (line_size > MAX_LINE_SIZE))
+    {
 		fprintf(stderr, "Error: El tamaño máximo de linea tiene que estar entre 16 y 1024.\n");
-		fprintf(stderr, "%s: option requires an argument -- 'l'\n", argv[0]);
-		print_help(argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -102,9 +99,8 @@ int main(int argc, char *argv[])
     char *bufferComando;
     int num_line = 1;
     int cont = 0;
-    line_t linea;
 
-    linea = malloc(sizeof(line_t));
+    line_t linea = malloc(sizeof(line_t));
     if (linea == NULL) {
         perror("malloc()");
         exit(EXIT_FAILURE);
@@ -126,7 +122,7 @@ int main(int argc, char *argv[])
     {
         if(cont > line_size)
         {
-            fprintf(stderr, "Error: línea %d demasiado larga: %s\n", num_line, bufferComando);
+            fprintf(stderr, "Error, línea %d demasiado larga: \"%s...\"\n", num_line, bufferComando);
             exit(EXIT_FAILURE);
         }
 
@@ -149,6 +145,8 @@ int main(int argc, char *argv[])
             }
         }
     }
+
+    free(linea);
 }
 
 void print_line(line_t line)
@@ -221,12 +219,12 @@ void execute_command(char** arguments, int num_line)
 
         i++;
     }
-    if(control == 0){
+
+    if(control == 0)
+    {
         normal_command(bin1, arguments, num_line);
     }
-
 }
-
 
 void normal_command(char *bin, char **args, int num_line){
     int status; // Variable para almacenar el estado de salida
@@ -239,6 +237,11 @@ void normal_command(char *bin, char **args, int num_line){
         exit(EXIT_FAILURE);
         break;
     case 0:
+        if(close(STDERR_FILENO) == -1) 
+        {
+            perror("close()");
+            exit(EXIT_FAILURE);
+        }
         execvp(bin, args);
         perror("execvp()");
         exit(EXIT_FAILURE);
@@ -254,6 +257,13 @@ void normal_command(char *bin, char **args, int num_line){
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
             fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
         }
+
+        // Verificar si el hijo terminó con una señal
+        if (WIFSIGNALED(status) != 0) 
+        {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status));
+        }
+
         break;
     }
 }
@@ -293,10 +303,10 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
     else    // Fichero de entrada
     {
         if(open(file_name, O_RDONLY) == -1) 
-            {
-                perror("open(filein)");
-                exit(EXIT_FAILURE);
-            }
+        {
+            perror("open(filein)");
+            exit(EXIT_FAILURE);
+        }
     }
 
     switch (pid = fork())
@@ -318,9 +328,17 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
         }
 
         // Verificar si el hijo terminó con un error
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) 
+        {
             fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
         }
+
+        // Verificar si el hijo terminó con una señal
+        if (WIFSIGNALED(status) != 0) 
+        {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status));
+        }
+
         break;
     }
 }
@@ -363,20 +381,11 @@ void pipe_command(char *bin_left, char **args_left, char *bin_right, char **args
             }
            
             execvp(bin_left, args_left);
-            perror("execlp(izquierdo)");
+            perror("execvp(izquierdo)");
             exit(EXIT_FAILURE);
             break;
-        default:
-            if (waitpid(pid1, &status1, 0) == -1)
-            {
-                perror("wait()");
-                exit(EXIT_FAILURE);
-            }
 
-            // Verificar si el hijo terminó con un error
-            if (WIFEXITED(status1) && WEXITSTATUS(status1) != 0) {
-                fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status1));
-            }
+        default:
             break;
     }
 
@@ -406,20 +415,11 @@ void pipe_command(char *bin_left, char **args_left, char *bin_right, char **args
             }
             
             execvp(bin_right, args_right);
-            perror("execlp(derecho)");
+            perror("execvp(derecho)");
             exit(EXIT_FAILURE);
             break;
-        default: 
-            if (waitpid(pid2, &status2, 0) == -1)
-            {
-                perror("wait()");
-                exit(EXIT_FAILURE);
-            }
 
-            // Verificar si el hijo terminó con un error
-            if (WIFEXITED(status2) && WEXITSTATUS(status2) != 0) {
-                fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status2));
-            }
+        default: 
             break;
     }
 
@@ -429,9 +429,46 @@ void pipe_command(char *bin_left, char **args_left, char *bin_right, char **args
         perror("close(pipefds[0])");
         exit(EXIT_FAILURE);
     }
+
     if (close(pipefds[1]) == -1)
     {
         perror("close(pipefds[1])");
         exit(EXIT_FAILURE);
+    }
+
+    if (waitpid(pid1, &status1, 0) == -1)
+    {
+        perror("wait()");
+        exit(EXIT_FAILURE);
+    }
+
+    if (waitpid(pid2, &status2, 0) == -1)
+    {
+        perror("wait()");
+        exit(EXIT_FAILURE);
+    }
+
+    // Verificar si el hijo terminó con un error
+    if (WIFEXITED(status1) && WEXITSTATUS(status1) != 0) 
+    {
+        fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status1));
+    }
+
+    // Verificar si el hijo terminó con una señal
+    if (WIFSIGNALED(status1) != 0) 
+    {
+        fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status1));
+    }
+
+    // Verificar si el hijo terminó con un error
+    if (WIFEXITED(status2) && WEXITSTATUS(status2) != 0) 
+    {
+        fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status2));
+    }
+
+    // Verificar si el hijo terminó con una señal
+    if (WIFSIGNALED(status2) != 0) 
+    {
+        fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status2));
     }
 }
