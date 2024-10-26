@@ -99,6 +99,7 @@ int main(int argc, char *argv[])
     char *bufferComando;
     int num_line = 1;
     int cont = 0;
+    int num_operators = 0;
 
     line_t linea = malloc(sizeof(line_t));
     if (linea == NULL) {
@@ -130,13 +131,36 @@ int main(int argc, char *argv[])
         {
             if (buffer[i] == CONTROL_CHAR)
             {
-                bufferComando[cont] = '\0';
-                linea->number = num_line;
-                linea->max_size = line_size;
-                linea->content = bufferComando;
-                parse_line(linea);
-                cont = 0;
-                num_line++;
+                if(num_operators > 1) 
+                {
+                    fprintf(stderr, "Error, línea %d tiene más de un operando de redirección o tubería\n", num_line);
+                    exit(EXIT_FAILURE);
+                } 
+                else 
+                {
+                    bufferComando[cont] = '\0';
+                    linea->number = num_line;
+                    linea->max_size = line_size;
+                    linea->content = bufferComando;
+                    parse_line(linea);
+                    cont = 0;
+                    num_line++;
+                    num_operators = 0;
+                }
+            }
+            else if(buffer[i] == '<')
+            {
+                num_operators++;
+            }
+            else if(buffer[i] == '>')
+            {
+                if(buffer[i+1] != '>' && buffer[i-1] != '>') num_operators++;
+                else if(buffer[i+1] == '>' && buffer[i-1] != '>') num_operators++;
+                else if(buffer[i+1] == '>' && buffer[i-1] == '>') num_operators += 2;
+            }
+            else if(buffer[i] == '|')
+            {
+                num_operators++;
             }
             else
             {
@@ -147,6 +171,8 @@ int main(int argc, char *argv[])
     }
 
     free(linea);
+    free(buffer);
+    free(bufferComando);
 }
 
 void print_line(line_t line)
@@ -174,9 +200,12 @@ void parse_line(line_t line)
         i++;
         token_read = strtok_r(NULL, SEPARATOR, &saveptr);
     }
-    tokens[i] = NULL;
+    tokens[i] = NULL;   // delimitador
 
-    execute_command(tokens, line->number);
+    if(tokens[0] != NULL)   // Si la línea está vacía tokens[0] == NULL
+        execute_command(tokens, line->number);
+
+    free(tokens);
 }
 
 void execute_command(char** arguments, int num_line)
