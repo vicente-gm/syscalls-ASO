@@ -19,7 +19,7 @@
 #define FILETYPE_OUT 0
 
 #define SEPARATOR " "
-#define CONTROL_CHAR "\n"
+#define CONTROL_CHAR '\n'
 
 
 struct line
