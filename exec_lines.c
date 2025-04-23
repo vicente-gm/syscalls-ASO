@@ -1,4 +1,3 @@
-// Vicente Gonzalez Morales y Alvaro Cutillas Florido. Grupo 3.3
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -21,29 +20,18 @@
 #define SEPARATOR " "
 #define CONTROL_CHAR '\n'
 
-
-struct line
-{
-    int number;
-    int max_size;
-    char *content;
-};
-typedef struct line *line_t;
-
 void print_help(char *nombre_programa);
-void parse_line(line_t line);
-void execute_command(char **arguments, int num_line);
+void parse_line(char *linea, int line_size, int num_line);
+void execute_command(char **tokens, int num_line);
 void normal_command(char *bin, char **args, int num_line);
 void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type, int num_line);
-void pipe_command(char *bin_out, char **args_out, char *bin_in, char **args_in, int num_line);
-
+void pipe_command(char **args, int pipe_pos, int num_line);
 
 int main(int argc, char *argv[])
 {
     int opt;
     int buf_size = DEFAULT_BUF_SIZE;
     int line_size = DEFAULT_LINE_SIZE;
-    int line;
 
     optind = 1;
     while ((opt = getopt(argc, argv, "l:b:h")) != -1)
@@ -51,11 +39,9 @@ int main(int argc, char *argv[])
         switch (opt)
         {
         case 'b':
-            buf_size = -1;
             buf_size = atoi(optarg);
             break;
         case 'l':
-            line_size = -1;
             line_size = atoi(optarg);
             break;
         case 'h':
@@ -67,446 +53,372 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (buf_size == -1)
-    {
-        fprintf(stderr, "%s: option requires an argument -- 'b'\n", argv[0]);
-        print_help(argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    if (line_size == -1)
-    {
-        fprintf(stderr, "%s: option requires an argument -- 'l'\n", argv[0]);
-        print_help(argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    if ((buf_size < MIN_BUF_SIZE) || (buf_size > MAX_BUF_SIZE))
+    // Comprobamos que el tamaño de buffer introducido esté dentro de los límites
+    if (buf_size < MIN_BUF_SIZE || buf_size > MAX_BUF_SIZE)
     {
         fprintf(stderr, "Error: El tamaño de buffer tiene que estar entre 1 y 8192.\n");
         exit(EXIT_FAILURE);
     }
 
-    if ((line_size < MIN_LINE_SIZE) || (line_size > MAX_LINE_SIZE))
+    // Comprobamos que el tamaño de línea introducido esté dentro de los límites
+    if (line_size < MIN_LINE_SIZE || line_size > MAX_LINE_SIZE)
     {
-        fprintf(stderr, "Error: El tamaño máximo de linea tiene que estar entre 16 y 1024.\n");
+        fprintf(stderr, "Error: El tamaño mñximo de linea tiene que estar entre 16 y 1024.\n");
         exit(EXIT_FAILURE);
     }
 
-    ssize_t num_read;
-    ssize_t bytesTotal = 0;
+    // Reservamos memoria para el buffer de lectura
     char *buffer;
-    char *bufferComando;
-    int num_line = 1;
-    int cont = 0;
-    int num_operators = 0;
-
-    line_t linea = malloc(sizeof(line_t));
-    if (linea == NULL)
-    {
-        perror("malloc()");
-        exit(EXIT_FAILURE);
-    }
-
     if ((buffer = malloc(buf_size * sizeof(char))) == NULL)
     {
         perror("malloc()");
         exit(EXIT_FAILURE);
     }
 
-    if ((bufferComando = malloc(line_size * sizeof(char))) == NULL)
+    char line_buf[line_size + 1];   // Array para guardar la línea leída
+    int cont = 0, num_line = 1;
+    ssize_t num_read;
+
+    while ((num_read = read(STDIN_FILENO, buffer, buf_size)) > 0)
+    {
+        for (ssize_t i = 0; i < num_read; i++)
+        {
+            if (buffer[i] == CONTROL_CHAR)
+            {
+                line_buf[cont] = '\0';
+                parse_line(line_buf, line_size, num_line);
+
+                cont = 0;
+                num_line++;
+            }
+            else
+            {
+                line_buf[cont] = buffer[i];
+                cont++;
+                if (cont >= line_size)
+                {
+                    line_buf[cont] = '\0';
+                    fprintf(stderr, "Error, línea %d demasiado larga: \"%s...\"\n", num_line, line_buf);
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
+    }
+
+    // Comprobamos si queda alguna línea por procesar
+    if (cont > 0) 
+    {
+        line_buf[cont] = '\0';
+        parse_line(line_buf, line_size, num_line);
+    }
+
+    free(buffer);
+
+    return EXIT_SUCCESS;
+}
+
+void print_help(char *nombre_programa)
+{
+    fprintf(stderr, "Uso: %s [-b BUF_SIZE] [-l MAX_LINE_SIZE]\n", nombre_programa);
+    fprintf(stderr, "Lee de la entrada estándar una secuencia de líneas conteniendo órdenes\npara ser ejecutadas y lanza los procesos necesarios para ejecutar cada línea, esperando a su terminación para ejecutar la siguiente.\n");
+    fprintf(stderr, "-b BUF_SIZE\t\tTamaño del buffer de entrada 1<=BUF_SIZE<=8192\n");
+    fprintf(stderr, "-l MAX_LINE_SIZE\tTamaño máximo de línea 16<=MAX_LINE_SIZE<=1024\n");
+}
+
+void parse_line(char *linea, int line_size, int num_line)
+{
+    // Creamos la lista de tokens
+    int max_tokens = line_size / 2 + 1;
+    char **tokens = malloc(max_tokens * sizeof(char *));
+    if (tokens == NULL) 
     {
         perror("malloc()");
         exit(EXIT_FAILURE);
     }
 
-    while ((num_read = read(STDIN_FILENO, buffer, buf_size)) > 0)
-    {
-        if (cont > line_size)
-        {
-            fprintf(stderr, "Error, línea %d demasiado larga: \"%s...\"\n", num_line, bufferComando);
-            exit(EXIT_FAILURE);
-        }
-
-        for (ssize_t i = 0; i < num_read; i++)
-        {
-            if (buffer[i] == CONTROL_CHAR)
-            {
-                if (num_operators > 1)
-                {
-                    fprintf(stderr, "Error, línea %d tiene más de un operando de redirección o tubería\n", num_line);
-                    exit(EXIT_FAILURE);
-                }
-                else
-                {
-                    bufferComando[cont] = '\0';
-                    linea->number = num_line;
-                    linea->max_size = line_size;
-                    linea->content = bufferComando;
-                    parse_line(linea);
-                    cont = 0;
-                    num_line++;
-                    num_operators = 0;
-                }
-            }
-            else if (buffer[i] == '<')
-            {
-                num_operators++;
-            }
-            else if (buffer[i] == '>')
-            {
-                if (buffer[i + 1] != '>' && buffer[i - 1] != '>') num_operators++;
-                else if (buffer[i + 1] == '>' && buffer[i - 1] != '>') num_operators++;
-                else if (buffer[i + 1] == '>' && buffer[i - 1] == '>') num_operators += 2;
-            }
-            else if (buffer[i] == '|')
-            {
-                num_operators++;
-            }
-            else
-            {
-                bufferComando[cont] = buffer[i];
-                cont++;
-            }
-        }
-    }
-
-    free(linea);
-    free(buffer);
-    free(bufferComando);
-}
-
-
-void print_line(line_t line)
-{
-    printf("Línea número: %d\n", line->number);
-    printf("Tamaño máximo de la línea: %d\n", line->max_size);
-    printf("Contenido de la línea: %s\n\n", line->content);
-}
-
-
-void print_help(char *nombre_programa)
-{
-    fprintf(stderr, "Uso: %s [-b BUF_SIZE] [-l MAX_LINE_SIZE]\nLee de la entrada estándar una secuencia de líneas conteniendo órdenes\npara ser ejecutadas y lanza los procesosnecesarios para ejecutar cada línea, esperando a su terminacion para ejecutar la siguiente.\n-b BUF_SIZE\t\tTamaño del buffer de entrada 1<=BUF_SIZE<=8192\n-l MAX_LINE_SIZE\tTamaño máximo de línea 16<=MAX_LINE_SIZE<=1024\n", nombre_programa);
-}
-
-
-void parse_line(line_t line)
-{
-    char **tokens = malloc((line->max_size / 2 + 1) * sizeof(char *));
     int i = 0;
 
+    // Leemos los tokens de la línea y los almacenamos en la lista 
     char *saveptr;
-    char *token_read = strtok_r(line->content, SEPARATOR, &saveptr);
-    while (token_read != NULL)
+    char *token = strtok_r(linea, SEPARATOR, &saveptr);
+    while (token && i < max_tokens - 1)
     {
-        tokens[i] = token_read;
+        tokens[i] = token;
+        token = strtok_r(NULL, SEPARATOR, &saveptr);
         i++;
-        token_read = strtok_r(NULL, SEPARATOR, &saveptr);
     }
-    tokens[i] = NULL; // delimitador
+    tokens[i] = NULL;
 
-    if (tokens[0] != NULL) // Si la línea está vacía tokens[0] == NULL
-        execute_command(tokens, line->number);
+    if (!tokens[0])
+    {
+        free(tokens);
+        return;
+    }
+
+    // Comprobamos el número de operadores que tiene la línea y si hay una tubería
+    int num_operators = 0, pipe_pos = -1;
+    for (int j = 0; tokens[j]; j++)
+    {
+        if (strcmp(tokens[j], "<") == 0 || strcmp(tokens[j], ">") == 0 ||
+            strcmp(tokens[j], ">>") == 0 || strcmp(tokens[j], "|") == 0)
+        {
+            num_operators++;
+            if (strcmp(tokens[j], "|") == 0)
+                pipe_pos = j;
+        }
+    }
+
+    if (num_operators > 1)
+    {
+        fprintf(stderr, "Error, línea %d tiene más de un operando de redirección o tubería\n", num_line);
+        free(tokens);
+        exit(EXIT_FAILURE);
+    }
+
+    if (pipe_pos != -1)
+    {
+        pipe_command(tokens, pipe_pos, num_line);
+    }
+    else
+    {
+        execute_command(tokens, num_line);
+    }
 
     free(tokens);
 }
 
-
-void execute_command(char **arguments, int num_line)
+void execute_command(char **args, int num_line)
 {
-    char *bin1 = arguments[0];
-    char *bin2 = NULL;
-    int trunc = 0;
-    int control = 0;
-
-    int i = 0;
-    while (arguments[i] != NULL)
+    char *bin = args[0];
+    for (int i = 0; args[i]; i++)
     {
-        if (strcmp(arguments[i], "<") == 0)
+        if (strcmp(args[i], "<") == 0)
         {
-            control = 1;
-            arguments[i] = NULL;
-            redir_command(bin1, arguments, arguments[i + 1], STDIN_FILENO, 1, FILETYPE_IN, num_line);
+            args[i] = NULL;
+            redir_command(bin, args, args[i + 1], STDIN_FILENO, 1, FILETYPE_IN, num_line);
+            return;
         }
-        else if (strcmp(arguments[i], ">") == 0)
+        else if (strcmp(args[i], ">") == 0)
         {
-            control = 1;
-            arguments[i] = NULL;
-            redir_command(bin1, arguments, arguments[i + 1], STDOUT_FILENO, 1, FILETYPE_OUT, num_line);
+            args[i] = NULL;
+            redir_command(bin, args, args[i + 1], STDOUT_FILENO, 1, FILETYPE_OUT, num_line);
+            return;
         }
-        else if (strcmp(arguments[i], ">>") == 0)
+        else if (strcmp(args[i], ">>") == 0)
         {
-            control = 1;
-            arguments[i] = NULL;
-            redir_command(bin1, arguments, arguments[i + 1], STDOUT_FILENO, 0, FILETYPE_OUT, num_line);
+            args[i] = NULL;
+            redir_command(bin, args, args[i + 1], STDOUT_FILENO, 0, FILETYPE_OUT, num_line);
+            return;
         }
-        else if (strcmp(arguments[i], "|") == 0)
-        {
-            control = 1;
-            arguments[i] = NULL;
-            char **args1 = arguments;
-            char **args2 = arguments + (i + 1);
-            char *bin2 = arguments[i + 1];
-            pipe_command(bin1, args1, bin2, args2, num_line);
-        }
-
-        i++;
     }
-
-    if (control == 0)
-    {
-        normal_command(bin1, arguments, num_line);
-    }
+    normal_command(bin, args, num_line);
 }
-
 
 void normal_command(char *bin, char **args, int num_line)
 {
-    int status; // Variable para almacenar el estado de salida
+    int status;
     pid_t pid = fork();
 
     switch (pid)
     {
-    case -1:
-        perror("fork()");
-        exit(EXIT_FAILURE);
-        break;
-    case 0:
-        if (close(STDERR_FILENO) == -1)
-        {
-            perror("close()");
+        case -1:
+            perror("fork()");
             exit(EXIT_FAILURE);
-        }
-        execvp(bin, args);
-        perror("execvp()");
-        exit(EXIT_FAILURE);
-        break;
-    default:
-        if (waitpid(pid, &status, 0) == -1)
-        {
-            perror("wait()");
+            break;
+            
+        case 0: // Estamos en el hijo
+            execvp(bin, args);
+            perror("execvp()"); // Si todo va bien no deberíamos ejecutar esto
             exit(EXIT_FAILURE);
-        }
-
-        // Verificar si el hijo terminó con un error
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-        {
-            fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
-        }
-
-        // Verificar si el hijo terminó con una señal
-        if (WIFSIGNALED(status) != 0)
-        {
-            fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status));
-        }
-
-        break;
+            break;
+            
+        default:
+            // Esperamos a que acabe el hijo y recuperamos su status de salida
+            if (waitpid(pid, &status, 0) == -1)
+            {
+                perror("wait()");
+                exit(EXIT_FAILURE);
+            }
+            if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+            {
+                fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
+                exit(EXIT_FAILURE);
+            }
+            else if (WIFSIGNALED(status))
+            {
+                fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
+                exit(EXIT_FAILURE);
+            }
+            break;
     }
 }
-
 
 // type : tipo de fichero. 1 para entrada, 0 para salida.
 // También se pueden usar las macros FILETYPE_IN y FILETYPE_OUT.
 void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type, int num_line)
 {
-    int status; // Variable para almacenar el estado de salida
-    pid_t pid;
+    pid_t pid = fork();
+    int status;
 
-    if (close(fd) == -1)
+    switch (pid)
     {
-        perror("close()");
-        exit(EXIT_FAILURE);
-    }
-
-    int flags = -1;
-    if (!type) // Fichero de salida
-    {
-        if (trunc)
-        {
-            flags = O_WRONLY | O_CREAT | O_TRUNC;
-        }
-        else
-        {
-            flags = O_WRONLY | O_CREAT | O_APPEND;
-        }
-
-        if (open(file_name, flags, S_IWUSR | S_IRUSR) == -1)
-        {
-            perror("open(fileout)");
+        case -1:
+            perror("fork()");
             exit(EXIT_FAILURE);
-        }
-    }
-    else // Fichero de entrada
-    {
-        if (open(file_name, O_RDONLY) == -1)
+            break;
+
+        case 0: // Estamos en el hijo
         {
-            perror("open(filein)");
+            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
+
+            // Comprobamos el tipo de fichero
+            int newfd;
+            if (type == FILETYPE_OUT)
+            {
+                int flags = trunc ? (O_WRONLY | O_CREAT | O_TRUNC) : (O_WRONLY | O_CREAT | O_APPEND);
+                newfd = open(file_name, flags, S_IWUSR | S_IRUSR);
+            }
+            else
+            {
+                newfd = open(file_name, O_RDONLY);
+            }
+
+            if (newfd == -1)
+            {
+                perror("open()");
+                exit(EXIT_FAILURE);
+            }
+
+            if (dup2(newfd, fd) == -1)
+            {
+                perror("dup2()");
+                exit(EXIT_FAILURE);
+            }
+
+            close(newfd);
+            execvp(bin, args);
+            perror("execvp()");
             exit(EXIT_FAILURE);
+            break;
         }
+
+        default:
+            // Esperamos a que acabe el hijo y recuperamos su status de salida
+            if (waitpid(pid, &status, 0) == -1)
+            {
+                perror("wait()");
+                exit(EXIT_FAILURE);
+            }
+            if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+            {
+                fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
+                exit(EXIT_FAILURE);
+            }
+            else if (WIFSIGNALED(status))
+            {
+                fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
+                exit(EXIT_FAILURE);
+            }
+            break;
     }
 
-    switch (pid = fork())
-    {
-    case -1:
-        perror("fork(1)");
-        exit(EXIT_FAILURE);
-        break;
-    case 0:
-        execvp(bin, args);
-        perror("execvp(redir)");
-        exit(EXIT_FAILURE);
-        break;
-    default:
-        if (waitpid(pid, &status, 0) == -1)
-        {
-            perror("wait()");
-            exit(EXIT_FAILURE);
-        }
-
-        // Verificar si el hijo terminó con un error
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-        {
-            fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
-        }
-
-        // Verificar si el hijo terminó con una señal
-        if (WIFSIGNALED(status) != 0)
-        {
-            fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status));
-        }
-
-        break;
-    }
 }
 
-
-void pipe_command(char *bin_left, char **args_left, char *bin_right, char **args_right, int num_line)
+void pipe_command(char **args, int pipe_pos, int num_line)
 {
+    args[pipe_pos] = NULL;
+    char **left = args;
+    char **right = &args[pipe_pos + 1];
     int pipefds[2];
+    int status1, status2;
+
     if (pipe(pipefds) == -1)
     {
         perror("pipe()");
         exit(EXIT_FAILURE);
     }
 
-    int status1, status2;
-    pid_t pid1, pid2;
-
-    switch (pid1 = fork()) // Hijo izquierdo de la tubería
+    // Hijo de la izquierda
+    pid_t pid1 = fork();
+    switch (pid1)
     {
-    case -1:
-        perror("fork(1)");
-        exit(EXIT_FAILURE);
-        break;
-    case 0:
-        if (close(pipefds[0]) == -1)
-        {
-            perror("close(1)");
+        case -1:
+            perror("fork()");
             exit(EXIT_FAILURE);
-        }
+            break;
 
-        if (dup2(pipefds[1], STDOUT_FILENO) == -1)
-        {
-            perror("dup2(1)");
+        case 0:
+            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
+            
+            // Redirigimos la salida estándar hacia la tubería
+            dup2(pipefds[1], STDOUT_FILENO);
+            close(pipefds[0]);
+            close(pipefds[1]);
+
+            execvp(left[0], left);
+            perror("execvp(left)");
             exit(EXIT_FAILURE);
-        }
-
-        if (close(pipefds[1]) == -1)
-        {
-            perror("close(2)");
-            exit(EXIT_FAILURE);
-        }
-
-        execvp(bin_left, args_left);
-        perror("execvp(izquierdo)");
-        exit(EXIT_FAILURE);
-        break;
-
-    default:
-        break;
+            break;
+        
+        default:
+            break;  // El padre continua
     }
 
-    switch (pid2 = fork()) // Hijo derecho de la tubería
+    // Hijo de la derecha
+    pid_t pid2 = fork();
+    switch (pid2)
     {
-    case -1:
-        perror("fork(2)");
-        exit(EXIT_FAILURE);
-        break;
-    case 0:
-        if (close(pipefds[1]) == -1)
-        {
-            perror("close(3)");
+        case -1:
+            perror("fork()");
             exit(EXIT_FAILURE);
-        }
+            break;
 
-        if (dup2(pipefds[0], STDIN_FILENO) == -1)
-        {
-            perror("dup2(2)");
+        case 0:
+            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
+
+            // Redirigimos la entrada estándar desde la tubería
+            dup2(pipefds[0], STDIN_FILENO);
+            close(pipefds[0]);
+            close(pipefds[1]);
+
+            execvp(right[0], right);
+            perror("execvp(right)");
             exit(EXIT_FAILURE);
-        }
+            break;
 
-        if (close(pipefds[0]) == -1)
-        {
-            perror("close(4)");
-            exit(EXIT_FAILURE);
-        }
-
-        execvp(bin_right, args_right);
-        perror("execvp(derecho)");
-        exit(EXIT_FAILURE);
-        break;
-
-    default:
-        break;
+        default:
+            break;  // El padre continua
     }
 
-    // Cerramos los descriptores de fichero del padre
-    if (close(pipefds[0]) == -1)
-    {
-        perror("close(pipefds[0])");
-        exit(EXIT_FAILURE);
-    }
+    // Cerramos los descriptores de la tubería en el padre
+    close(pipefds[0]);
+    close(pipefds[1]);
 
-    if (close(pipefds[1]) == -1)
-    {
-        perror("close(pipefds[1])");
-        exit(EXIT_FAILURE);
-    }
+    // Esperamos a que acaben los hijos y recuperamos sus status de salida
+    waitpid(pid1, &status1, 0);
+    waitpid(pid2, &status2, 0);
 
-    if (waitpid(pid1, &status1, 0) == -1)
-    {
-        perror("wait()");
-        exit(EXIT_FAILURE);
-    }
-
-    if (waitpid(pid2, &status2, 0) == -1)
-    {
-        perror("wait()");
-        exit(EXIT_FAILURE);
-    }
-
-    // Verificar si el hijo terminó con un error
     if (WIFEXITED(status1) && WEXITSTATUS(status1) != 0)
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status1));
+        exit(EXIT_FAILURE);
     }
-
-    // Verificar si el hijo terminó con una señal
-    if (WIFSIGNALED(status1) != 0)
+    else if (WIFSIGNALED(status1))
     {
-        fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status1));
+        fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status1));
+        exit(EXIT_FAILURE);
     }
 
-    // Verificar si el hijo terminó con un error
     if (WIFEXITED(status2) && WEXITSTATUS(status2) != 0)
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status2));
+        exit(EXIT_FAILURE);
+    }
+    else if (WIFSIGNALED(status2))
+    {
+        fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con por señal %d.\n", num_line, WTERMSIG(status2));
+        exit(EXIT_FAILURE);
     }
 
-    // Verificar si el hijo terminó con una señal
-    if (WIFSIGNALED(status2) != 0)
-    {
-        fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con código %d.\n", num_line, WTERMSIG(status2));
-    }
+    
 }
