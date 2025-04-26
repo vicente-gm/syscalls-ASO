@@ -1,3 +1,4 @@
+// Vicente González Morales y Álvaro Cutillas Florido. Grupo 3.3
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -76,7 +77,8 @@ int main(int argc, char *argv[])
     }
 
     char line_buf[line_size + 1];   // Array para guardar la línea leída
-    int cont = 0, num_line = 1;
+    int cont = 0;   // Contador de letras que llevamos leídas
+    int num_line = 1;
     ssize_t num_read;
 
     while ((num_read = read(STDIN_FILENO, buffer, buf_size)) > 0)
@@ -95,7 +97,7 @@ int main(int argc, char *argv[])
             {
                 line_buf[cont] = buffer[i];
                 cont++;
-                if (cont >= line_size)
+                if (cont > line_size)
                 {
                     line_buf[cont] = '\0';
                     fprintf(stderr, "Error, línea %d demasiado larga: \"%s...\"\n", num_line, line_buf);
@@ -156,7 +158,8 @@ void parse_line(char *linea, int line_size, int num_line)
     }
 
     // Comprobamos el número de operadores que tiene la línea y si hay una tubería
-    int num_operators = 0, pipe_pos = -1;
+    int num_operators = 0;
+    int pipe_pos = -1;
     for (int j = 0; tokens[j]; j++)
     {
         if (strcmp(tokens[j], "<") == 0 || strcmp(tokens[j], ">") == 0 ||
@@ -211,6 +214,7 @@ void execute_command(char **args, int num_line)
             return;
         }
     }
+
     normal_command(bin, args, num_line);
 }
 
@@ -227,6 +231,8 @@ void normal_command(char *bin, char **args, int num_line)
             break;
             
         case 0: // Estamos en el hijo
+            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
+
             execvp(bin, args);
             perror("execvp()"); // Si todo va bien no deberíamos ejecutar esto
             exit(EXIT_FAILURE);
@@ -242,12 +248,12 @@ void normal_command(char *bin, char **args, int num_line)
             if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
             {
                 fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
-                exit(EXIT_FAILURE);
+                //exit(EXIT_FAILURE);
             }
             else if (WIFSIGNALED(status))
             {
                 fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
-                exit(EXIT_FAILURE);
+                //exit(EXIT_FAILURE);
             }
             break;
     }
@@ -312,12 +318,12 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
             if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
             {
                 fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
-                exit(EXIT_FAILURE);
+                //exit(EXIT_FAILURE);
             }
             else if (WIFSIGNALED(status))
             {
                 fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
-                exit(EXIT_FAILURE);
+                //exit(EXIT_FAILURE);
             }
             break;
     }
@@ -395,30 +401,38 @@ void pipe_command(char **args, int pipe_pos, int num_line)
     close(pipefds[1]);
 
     // Esperamos a que acaben los hijos y recuperamos sus status de salida
-    waitpid(pid1, &status1, 0);
-    waitpid(pid2, &status2, 0);
+    if (waitpid(pid1, &status1, 0) == -1)
+    {
+        perror("wait()");
+        exit(EXIT_FAILURE);
+    }
+
+    if (waitpid(pid2, &status2, 0) == -1)
+    {
+        perror("wait()");
+        exit(EXIT_FAILURE);
+    }
 
     if (WIFEXITED(status1) && WEXITSTATUS(status1) != 0)
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status1));
-        exit(EXIT_FAILURE);
+        //exit(EXIT_FAILURE);
     }
     else if (WIFSIGNALED(status1))
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status1));
-        exit(EXIT_FAILURE);
+        //exit(EXIT_FAILURE);
     }
 
     if (WIFEXITED(status2) && WEXITSTATUS(status2) != 0)
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status2));
-        exit(EXIT_FAILURE);
+        //exit(EXIT_FAILURE);
     }
     else if (WIFSIGNALED(status2))
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con por señal %d.\n", num_line, WTERMSIG(status2));
-        exit(EXIT_FAILURE);
+        //exit(EXIT_FAILURE);
     }
 
-    
 }
