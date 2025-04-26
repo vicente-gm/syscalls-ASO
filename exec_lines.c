@@ -8,25 +8,28 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 
+// Límites de tamaño de buffer
 #define MAX_BUF_SIZE 8192
 #define MIN_BUF_SIZE 1
 #define DEFAULT_BUF_SIZE 16
+
+// Límites de tamaño de línea
 #define MAX_LINE_SIZE 1024
 #define DEFAULT_LINE_SIZE 32
 #define MIN_LINE_SIZE 16
 
-#define FILETYPE_IN 1
-#define FILETYPE_OUT 0
+#define FILETYPE_IN 1  // Indica archivo de entrada. Usado en redir_command
+#define FILETYPE_OUT 0 // Indica archivo de salida. Usado en redir_command
 
-#define SEPARATOR " "
-#define CONTROL_CHAR '\n'
+#define SEPARATOR " "     // Caracter que separa los tokens en una línea
+#define CONTROL_CHAR '\n' // Caracter que separa las líneas
 
-void print_help(char *nombre_programa);
-void parse_line(char *linea, int line_size, int num_line);
-void execute_command(char **tokens, int num_line);
-void normal_command(char *bin, char **args, int num_line);
-void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type, int num_line);
-void pipe_command(char **args, int pipe_pos, int num_line);
+void print_help(char *nombre_programa);                                                                 // Imprime por pantalla cómo se debe usar el programa
+void parse_line(char *linea, int line_size, int num_line);                                              // Divide una línea en tokens separados por SEPARATOR
+void execute_command(char **tokens, int num_line);                                                      // Analiza los tokens introducidos detectando el tipo de comando y llama a la función correspondiente
+void normal_command(char *bin, char **args, int num_line);                                              // Ejecuta los comandos sin operadores
+void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, int type, int num_line); // Ejecuta los comandos con redirecciones (>, <, >>)
+void pipe_command(char **args, int pipe_pos, int num_line);                                             // Ejecuta los comandos con tuberías
 
 int main(int argc, char *argv[])
 {
@@ -76,13 +79,15 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    char line_buf[line_size + 1];   // Array para guardar la línea leída
-    int cont = 0;   // Contador de letras que llevamos leídas
+    char line_buf[line_size + 1]; // Array para guardar la línea leída
+    int cont = 0;                 // Contador de letras que llevamos leídas
     int num_line = 1;
     ssize_t num_read;
 
+    // Leemos de entrada estándar
     while ((num_read = read(STDIN_FILENO, buffer, buf_size)) > 0)
     {
+        // Dividimos las líneas
         for (ssize_t i = 0; i < num_read; i++)
         {
             if (buffer[i] == CONTROL_CHAR)
@@ -108,7 +113,7 @@ int main(int argc, char *argv[])
     }
 
     // Comprobamos si queda alguna línea por procesar
-    if (cont > 0) 
+    if (cont > 0)
     {
         line_buf[cont] = '\0';
         parse_line(line_buf, line_size, num_line);
@@ -132,7 +137,7 @@ void parse_line(char *linea, int line_size, int num_line)
     // Creamos la lista de tokens
     int max_tokens = line_size / 2 + 1;
     char **tokens = malloc(max_tokens * sizeof(char *));
-    if (tokens == NULL) 
+    if (tokens == NULL)
     {
         perror("malloc()");
         exit(EXIT_FAILURE);
@@ -140,7 +145,7 @@ void parse_line(char *linea, int line_size, int num_line)
 
     int i = 0;
 
-    // Leemos los tokens de la línea y los almacenamos en la lista 
+    // Leemos los tokens de la línea y los almacenamos en la lista
     char *saveptr;
     char *token = strtok_r(linea, SEPARATOR, &saveptr);
     while (token && i < max_tokens - 1)
@@ -197,7 +202,7 @@ void execute_command(char **args, int num_line)
     {
         if (strcmp(args[i], "<") == 0)
         {
-            args[i] = NULL;
+            args[i] = NULL; // Ponemos esto a NULL ya que exec ejecuta la lista de argumentos hasta que se encuentra uno NULL o el final.
             redir_command(bin, args, args[i + 1], STDIN_FILENO, 1, FILETYPE_IN, num_line);
             return;
         }
@@ -225,37 +230,35 @@ void normal_command(char *bin, char **args, int num_line)
 
     switch (pid)
     {
-        case -1:
-            perror("fork()");
-            exit(EXIT_FAILURE);
-            break;
-            
-        case 0: // Estamos en el hijo
-            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
+    case -1:
+        perror("fork()");
+        exit(EXIT_FAILURE);
+        break;
 
-            execvp(bin, args);
-            perror("execvp()"); // Si todo va bien no deberíamos ejecutar esto
+    case 0:                   // Estamos en el hijo
+        close(STDERR_FILENO); // Cerramos la salida de error para que no informe de errores
+
+        execvp(bin, args);
+        perror("execvp()"); // Si todo va bien no deberíamos ejecutar esto
+        exit(EXIT_FAILURE);
+        break;
+
+    default:
+        // Esperamos a que acabe el hijo y recuperamos su status de salida
+        if (waitpid(pid, &status, 0) == -1)
+        {
+            perror("wait()");
             exit(EXIT_FAILURE);
-            break;
-            
-        default:
-            // Esperamos a que acabe el hijo y recuperamos su status de salida
-            if (waitpid(pid, &status, 0) == -1)
-            {
-                perror("wait()");
-                exit(EXIT_FAILURE);
-            }
-            if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-            {
-                fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
-                //exit(EXIT_FAILURE);
-            }
-            else if (WIFSIGNALED(status))
-            {
-                fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
-                //exit(EXIT_FAILURE);
-            }
-            break;
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+        {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
+        }
+        else if (WIFSIGNALED(status))
+        {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
+        }
+        break;
     }
 }
 
@@ -268,66 +271,63 @@ void redir_command(char *bin, char **args, char *file_name, int fd, int trunc, i
 
     switch (pid)
     {
-        case -1:
-            perror("fork()");
-            exit(EXIT_FAILURE);
-            break;
+    case -1:
+        perror("fork()");
+        exit(EXIT_FAILURE);
+        break;
 
-        case 0: // Estamos en el hijo
+    case 0: // Estamos en el hijo
+    {
+        close(STDERR_FILENO); // Cerramos la salida de error para que no informe de errores
+
+        // Comprobamos el tipo de fichero
+        int newfd;
+        if (type == FILETYPE_OUT)
         {
-            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
-
-            // Comprobamos el tipo de fichero
-            int newfd;
-            if (type == FILETYPE_OUT)
-            {
-                int flags = trunc ? (O_WRONLY | O_CREAT | O_TRUNC) : (O_WRONLY | O_CREAT | O_APPEND);
-                newfd = open(file_name, flags, S_IWUSR | S_IRUSR);
-            }
-            else
-            {
-                newfd = open(file_name, O_RDONLY);
-            }
-
-            if (newfd == -1)
-            {
-                perror("open()");
-                exit(EXIT_FAILURE);
-            }
-
-            if (dup2(newfd, fd) == -1)
-            {
-                perror("dup2()");
-                exit(EXIT_FAILURE);
-            }
-
-            close(newfd);
-            execvp(bin, args);
-            perror("execvp()");
-            exit(EXIT_FAILURE);
-            break;
+            int flags = trunc ? (O_WRONLY | O_CREAT | O_TRUNC) : (O_WRONLY | O_CREAT | O_APPEND);
+            newfd = open(file_name, flags, S_IWUSR | S_IRUSR);
+        }
+        else
+        {
+            newfd = open(file_name, O_RDONLY);
         }
 
-        default:
-            // Esperamos a que acabe el hijo y recuperamos su status de salida
-            if (waitpid(pid, &status, 0) == -1)
-            {
-                perror("wait()");
-                exit(EXIT_FAILURE);
-            }
-            if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-            {
-                fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
-                //exit(EXIT_FAILURE);
-            }
-            else if (WIFSIGNALED(status))
-            {
-                fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
-                //exit(EXIT_FAILURE);
-            }
-            break;
+        if (newfd == -1)
+        {
+            perror("open()");
+            exit(EXIT_FAILURE);
+        }
+
+        if (dup2(newfd, fd) == -1)
+        {
+            perror("dup2()");
+            exit(EXIT_FAILURE);
+        }
+
+        close(newfd);
+        execvp(bin, args);
+        perror("execvp()");
+        exit(EXIT_FAILURE);
+        break;
     }
 
+    default:
+        // Esperamos a que acabe el hijo y recuperamos su status de salida
+        if (waitpid(pid, &status, 0) == -1)
+        {
+            perror("wait()");
+            exit(EXIT_FAILURE);
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+        {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status));
+        }
+        else if (WIFSIGNALED(status))
+        {
+            fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status));
+        }
+        break;
+    }
 }
 
 void pipe_command(char **args, int pipe_pos, int num_line)
@@ -348,52 +348,52 @@ void pipe_command(char **args, int pipe_pos, int num_line)
     pid_t pid1 = fork();
     switch (pid1)
     {
-        case -1:
-            perror("fork()");
-            exit(EXIT_FAILURE);
-            break;
+    case -1:
+        perror("fork()");
+        exit(EXIT_FAILURE);
+        break;
 
-        case 0:
-            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
-            
-            // Redirigimos la salida estándar hacia la tubería
-            dup2(pipefds[1], STDOUT_FILENO);
-            close(pipefds[0]);
-            close(pipefds[1]);
+    case 0:
+        close(STDERR_FILENO); // Cerramos la salida de error para que no informe de errores
 
-            execvp(left[0], left);
-            perror("execvp(left)");
-            exit(EXIT_FAILURE);
-            break;
-        
-        default:
-            break;  // El padre continua
+        // Redirigimos la salida estándar hacia la tubería
+        dup2(pipefds[1], STDOUT_FILENO);
+        close(pipefds[0]);
+        close(pipefds[1]);
+
+        execvp(left[0], left);
+        perror("execvp(left)");
+        exit(EXIT_FAILURE);
+        break;
+
+    default:
+        break; // El padre continua
     }
 
     // Hijo de la derecha
     pid_t pid2 = fork();
     switch (pid2)
     {
-        case -1:
-            perror("fork()");
-            exit(EXIT_FAILURE);
-            break;
+    case -1:
+        perror("fork()");
+        exit(EXIT_FAILURE);
+        break;
 
-        case 0:
-            close(STDERR_FILENO);   // Cerramos la salida de error para que no informe de errores
+    case 0:
+        close(STDERR_FILENO); // Cerramos la salida de error para que no informe de errores
 
-            // Redirigimos la entrada estándar desde la tubería
-            dup2(pipefds[0], STDIN_FILENO);
-            close(pipefds[0]);
-            close(pipefds[1]);
+        // Redirigimos la entrada estándar desde la tubería
+        dup2(pipefds[0], STDIN_FILENO);
+        close(pipefds[0]);
+        close(pipefds[1]);
 
-            execvp(right[0], right);
-            perror("execvp(right)");
-            exit(EXIT_FAILURE);
-            break;
+        execvp(right[0], right);
+        perror("execvp(right)");
+        exit(EXIT_FAILURE);
+        break;
 
-        default:
-            break;  // El padre continua
+    default:
+        break; // El padre continua
     }
 
     // Cerramos los descriptores de la tubería en el padre
@@ -416,23 +416,18 @@ void pipe_command(char **args, int pipe_pos, int num_line)
     if (WIFEXITED(status1) && WEXITSTATUS(status1) != 0)
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status1));
-        //exit(EXIT_FAILURE);
     }
     else if (WIFSIGNALED(status1))
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal por señal %d.\n", num_line, WTERMSIG(status1));
-        //exit(EXIT_FAILURE);
     }
 
     if (WIFEXITED(status2) && WEXITSTATUS(status2) != 0)
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación normal con código %d.\n", num_line, WEXITSTATUS(status2));
-        //exit(EXIT_FAILURE);
     }
     else if (WIFSIGNALED(status2))
     {
         fprintf(stderr, "Error al ejecutar la línea %d. Terminación anormal con por señal %d.\n", num_line, WTERMSIG(status2));
-        //exit(EXIT_FAILURE);
     }
-
 }
